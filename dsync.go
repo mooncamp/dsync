@@ -9,43 +9,55 @@ import (
 	"net/http"
 	"path/filepath"
 
-	"cloud.google.com/go/storage"
 	"github.com/elazarl/goproxy"
 	"github.com/sirupsen/logrus"
-	"google.golang.org/api/option"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
 )
 
 func main() {
-	var gcsCredentialsFilePath string
+	var endpoint, s3AccessKey, s3Secret string
 	var bucketName string
 	var toWatch string
+	var cryptoKey string
 
-	flag.StringVar(&gcsCredentialsFilePath, "key-file", "", "service account key file (json)")
 	flag.StringVar(&bucketName, "bucket-name", "", "bucket name")
 	flag.StringVar(&toWatch, "towatch", "/dgraph/export", "directory to watch")
+	flag.StringVar(&endpoint, "endpoint", "", "s3 endpoint")
+	flag.StringVar(&s3AccessKey, "access-key", "", "s3 access key")
+	flag.StringVar(&s3Secret, "secret", "", "s3 secret")
+	flag.StringVar(&cryptoKey, "crypto-key", "", "data encryption key")
 	flag.Parse()
 
-	client, err := storage.NewClient(context.Background(), option.WithCredentialsFile(gcsCredentialsFilePath))
+	sess, err := session.NewSession(&aws.Config{
+		Region:      aws.String("de"),
+		Endpoint:    aws.String(endpoint),
+		Credentials: credentials.NewStaticCredentials(s3AccessKey, s3Secret, ""),
+	})
 	if err != nil {
-		log.Fatalf("error creating gcs client: %v", err)
+		log.Fatalf("error initiating session: %v", err)
 	}
 
 	syn := &syncer{
-		Client: client,
-		Logger: logrus.New(),
+		Logger:  logrus.New(),
+		Session: sess,
 
 		toWatch:    toWatch,
 		bucketName: bucketName,
+		cryptoKey:  cryptoKey,
 	}
 	syn.run()
 }
 
 type syncer struct {
-	Client *storage.Client
-	Logger logrus.FieldLogger
+	Session *session.Session
+	Logger  logrus.FieldLogger
 
 	bucketName string
 	toWatch    string
+	cryptoKey  string
 }
 
 func (syn *syncer) run() error {
@@ -70,6 +82,8 @@ func (syn *syncer) run() error {
 				if !file.IsDir() {
 					continue
 				}
+
+				syn.Logger.Infof("syncing dir: %s", filepath.Join(syn.toWatch, file.Name()))
 
 				if err := syn.handleEvent(context.Background(), filepath.Join(syn.toWatch, file.Name())); err != nil {
 					syn.Logger.Errorf("error syncing dir %s: %v", filepath.Join(syn.toWatch, file.Name()), err)

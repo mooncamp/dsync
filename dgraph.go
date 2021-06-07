@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -9,7 +11,22 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3"
 )
+
+type readMockSeeker struct {
+	Reader io.Reader
+}
+
+func (rms *readMockSeeker) Read(p []byte) (n int, err error) {
+	return rms.Reader.Read(p)
+}
+
+func (rms *readMockSeeker) Seek(offset int64, whence int) (int64, error) {
+	return 0, nil
+}
 
 func (syn *syncer) handleEvent(ctx context.Context, dir string) error {
 	stats, err := ioutil.ReadDir(dir)
@@ -36,18 +53,28 @@ func (syn *syncer) handleEvent(ctx context.Context, dir string) error {
 			return fmt.Errorf("error opening file %s: %w", filepath.Join(dir, stat.Name()), err)
 		}
 
-		rdfWriter := syn.Client.Bucket(syn.bucketName).Object(syn.findObject(stat.Name())).NewWriter(ctx)
+		syn.Logger.Infof("initiating sync of %s to s3://%s/%s", filepath.Join(dir, stat.Name()), syn.bucketName, syn.findObject(stat.Name()))
 
-		_, err = io.Copy(rdfWriter, file)
+		h := md5.New()
+		if _, err := h.Write([]byte(syn.cryptoKey)); err != nil {
+			return fmt.Errorf("error generating md5 digest of encryption key: %w", err)
+		}
+		digest := base64.StdEncoding.EncodeToString(h.Sum(nil))
+
+		svc := s3.New(syn.Session)
+		_, err = svc.PutObject(&s3.PutObjectInput{
+			Bucket:               aws.String(syn.bucketName),
+			Key:                  aws.String(syn.findObject(stat.Name())),
+			Body:                 file,
+			SSECustomerAlgorithm: aws.String("AES256"),
+			SSECustomerKey:       aws.String(syn.cryptoKey),
+			SSECustomerKeyMD5:    aws.String(digest),
+		})
 		if err != nil {
-			return fmt.Errorf("error sending file: %w", err)
+			return fmt.Errorf("error storing backup object to s3: %w", err)
 		}
 
-		if err := rdfWriter.Close(); err != nil {
-			return fmt.Errorf("error flushing %s to gs://%s/%s: %w", filepath.Join(dir, stat.Name()), syn.bucketName, syn.findObject(stat.Name()), err)
-		}
-
-		syn.Logger.Printf("synchronized %s to gs://%s/%s", filepath.Join(dir, stat.Name()), syn.bucketName, syn.findObject(stat.Name()))
+		syn.Logger.Printf("synchronized %s to s3://%s/%s", filepath.Join(dir, stat.Name()), syn.bucketName, syn.findObject(stat.Name()))
 	}
 
 	if err := os.RemoveAll(dir); err != nil {
