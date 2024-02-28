@@ -92,7 +92,7 @@ func (TaskStatus) Running() TaskStatus {
 	return "Running"
 }
 func (TaskStatus) Failed() TaskStatus {
-	return "Running"
+	return "Failed"
 }
 func (TaskStatus) Success() TaskStatus {
 	return "Success"

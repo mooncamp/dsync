@@ -40,15 +40,15 @@ query {
 }
 `
 	reqBody = fmt.Sprintf(reqBody, exportResp.ID())
-
 	client := http.Client{}
-	req, err := http.NewRequest(http.MethodPost, "http://localhost:8080/admin", strings.NewReader(reqBody))
-	if err != nil {
-		return fmt.Errorf("unable to form admin request: %w", err)
-	}
 
 	it := 0
 	for {
+		req, err := http.NewRequest(http.MethodPost, "http://localhost:8080/admin", strings.NewReader(reqBody))
+		if err != nil {
+			return fmt.Errorf("unable to form admin request: %w", err)
+		}
+
 		syn.Logger.WithField("task.id", exportResp.ID()).WithField("iteration", it).Info("requesting export task status")
 		req.Header.Set("Content-Type", "application/graphql")
 		resp, err := client.Do(req)
