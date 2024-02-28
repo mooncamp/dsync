@@ -4,9 +4,10 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,8 +29,61 @@ func (rms *readMockSeeker) Seek(offset int64, whence int) (int64, error) {
 	return 0, nil
 }
 
+func (syn *syncer) busyWait(ctx context.Context, exportResp ExportResponse) error {
+	syn.Logger.WithField("task.id", exportResp.ID()).Info("busy waiting for task success")
+
+	reqBody := `
+query {
+  task(input: { id: "%s" }) {
+    status
+  }
+}
+`
+	reqBody = fmt.Sprintf(reqBody, exportResp.ID())
+
+	client := http.Client{}
+	req, err := http.NewRequest(http.MethodPost, "http://localhost:8080/admin", strings.NewReader(reqBody))
+	if err != nil {
+		return fmt.Errorf("unable to form admin request: %w", err)
+	}
+
+	it := 0
+	for {
+		syn.Logger.WithField("task.id", exportResp.ID()).WithField("iteration", it).Info("requesting export task status")
+		req.Header.Set("Content-Type", "application/graphql")
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("error executing admin status request: %w", err)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("unable to read admin status response: %w", err)
+		}
+
+		var statusResponse StatusResponse
+		if err := json.Unmarshal(body, &statusResponse); err != nil {
+			return fmt.Errorf("unable to decode admin status response: %w", err)
+		}
+
+		if statusResponse.Data.Task.Status == new(TaskStatus).Success() {
+			break
+		}
+
+		if statusResponse.Data.Task.Status == new(TaskStatus).Failed() {
+			return fmt.Errorf("export task failed")
+		}
+
+		time.Sleep(time.Second * 5)
+		it++
+	}
+
+	syn.Logger.WithField("task.id", exportResp.ID()).Info("busy wait stop")
+	return nil
+}
+
 func (syn *syncer) handleEvent(ctx context.Context, dir string) error {
-	stats, err := ioutil.ReadDir(dir)
+	stats, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("error reading dir %s: %w", dir, err)
 	}
