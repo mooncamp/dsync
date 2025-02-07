@@ -16,9 +16,9 @@ import (
 	"github.com/elazarl/goproxy"
 	"github.com/sirupsen/logrus"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/minio/minio-go/v7/pkg/encrypt"
 )
 
 func main() {
@@ -35,18 +35,24 @@ func main() {
 	flag.StringVar(&cryptoKey, "crypto-key", "", "data encryption key")
 	flag.Parse()
 
-	sess, err := session.NewSession(&aws.Config{
-		Region:      aws.String("de"),
-		Endpoint:    aws.String(endpoint),
-		Credentials: credentials.NewStaticCredentials(s3AccessKey, s3Secret, ""),
+	ssec, err := encrypt.NewSSEC([]byte(cryptoKey))
+	if err != nil {
+		log.Fatalf("error initializing crypto key: %v", err)
+	}
+
+	minioClient, err := minio.New(endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(s3AccessKey, s3Secret, ""),
+		Secure: true,
 	})
 	if err != nil {
-		log.Fatalf("error initiating session: %v", err)
+		log.Fatalln(err)
 	}
 
 	syn := &syncer{
-		Logger:  logrus.New(),
-		Session: sess,
+		Logger: logrus.New(),
+
+		SSEC:        ssec,
+		MinioClient: minioClient,
 
 		toWatch:    toWatch,
 		bucketName: bucketName,
@@ -56,8 +62,9 @@ func main() {
 }
 
 type syncer struct {
-	Session *session.Session
-	Logger  logrus.FieldLogger
+	MinioClient *minio.Client
+	SSEC        encrypt.ServerSide
+	Logger      logrus.FieldLogger
 
 	bucketName string
 	toWatch    string

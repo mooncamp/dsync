@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/md5"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,8 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/minio/minio-go/v7"
 )
 
 type readMockSeeker struct {
@@ -35,7 +33,7 @@ func (syn *syncer) busyWait(ctx context.Context, exportResp ExportResponse) erro
 	reqBody := `
 query {
   task(input: { id: "%s" }) {
-    status
+	status
   }
 }
 `
@@ -93,16 +91,17 @@ func (syn *syncer) handleEvent(ctx context.Context, dir string) error {
 			continue
 		}
 
-		var file *os.File
+		var fileStat os.FileInfo
 		for i := 0; i < 10; i++ {
-			file, err = os.OpenFile(filepath.Join(dir, stat.Name()), os.O_EXCL|os.O_RDONLY, 0600)
+			fileStat, err = os.Stat(filepath.Join(dir, stat.Name()))
 			if err != nil {
-				syn.Logger.Infof("error opening file (O_EXCL): %v", err)
+				syn.Logger.Infof("error stating file: %v", err)
 				time.Sleep(time.Second * 5)
 				continue
 			}
 		}
 
+		file, err := os.OpenFile(filepath.Join(dir, stat.Name()), os.O_EXCL|os.O_RDONLY, 0600)
 		if err != nil {
 			return fmt.Errorf("error opening file %s: %w", filepath.Join(dir, stat.Name()), err)
 		}
@@ -113,17 +112,13 @@ func (syn *syncer) handleEvent(ctx context.Context, dir string) error {
 		if _, err := h.Write([]byte(syn.cryptoKey)); err != nil {
 			return fmt.Errorf("error generating md5 digest of encryption key: %w", err)
 		}
-		digest := base64.StdEncoding.EncodeToString(h.Sum(nil))
 
-		svc := s3.New(syn.Session)
-		_, err = svc.PutObject(&s3.PutObjectInput{
-			Bucket:               aws.String(syn.bucketName),
-			Key:                  aws.String(syn.findObject(stat.Name())),
-			Body:                 file,
-			SSECustomerAlgorithm: aws.String("AES256"),
-			SSECustomerKey:       aws.String(syn.cryptoKey),
-			SSECustomerKeyMD5:    aws.String(digest),
-		})
+		_, err = syn.MinioClient.PutObject(
+			ctx,
+			syn.bucketName,
+			syn.findObject(stat.Name()), file, fileStat.Size(),
+			minio.PutObjectOptions{ServerSideEncryption: syn.SSEC},
+		)
 		if err != nil {
 			return fmt.Errorf("error storing backup object to s3: %w", err)
 		}

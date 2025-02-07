@@ -1,16 +1,26 @@
 module github.com/mooncamp/dsync
 
-go 1.21
+go 1.22
+
+toolchain go1.23.6
 
 require (
-	github.com/aws/aws-sdk-go v1.37.31
-	github.com/elazarl/goproxy v0.0.0-20200809112317-0581fc3aee2d
-	github.com/sirupsen/logrus v1.6.0
+	github.com/elazarl/goproxy v1.7.0
+	github.com/minio/minio-go/v7 v7.0.84
+	github.com/sirupsen/logrus v1.9.3
 )
 
 require (
-	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	github.com/konsorten/go-windows-terminal-sequences v1.0.3 // indirect
-	github.com/stretchr/testify v1.4.0 // indirect
-	golang.org/x/sys v0.0.0-20200930185726-fdedc70b468f // indirect
+	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/go-ini/ini v1.67.0 // indirect
+	github.com/goccy/go-json v0.10.4 // indirect
+	github.com/google/uuid v1.6.0 // indirect
+	github.com/klauspost/compress v1.17.11 // indirect
+	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
+	github.com/minio/md5-simd v1.1.2 // indirect
+	github.com/rs/xid v1.6.0 // indirect
+	golang.org/x/crypto v0.32.0 // indirect
+	golang.org/x/net v0.34.0 // indirect
+	golang.org/x/sys v0.30.0 // indirect
+	golang.org/x/text v0.22.0 // indirect
 )
