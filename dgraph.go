@@ -126,7 +126,7 @@ func (syn *syncer) handleEvent(ctx context.Context, dir string) error {
 			minio.PutObjectOptions{ServerSideEncryption: syn.SSEC},
 		)
 		if err != nil {
-			return fmt.Errorf("error storing backup object to s3: %w", err)
+			return fmt.Errorf("error storing backup object %s to s3: %w", syn.findObject(stat.Name()), err)
 		}
 
 		syn.Logger.Printf("synchronized %s to s3://%s/%s", filepath.Join(dir, stat.Name()), syn.bucketName, syn.findObject(stat.Name()))
