@@ -81,6 +81,12 @@ query {
 }
 
 func (syn *syncer) handleEvent(ctx context.Context, dir string) error {
+	defer func() {
+		if err := os.RemoveAll(dir); err != nil {
+			syn.Logger.Errorf("error cleaning dir %s: %v", dir, err)
+		}
+	}()
+
 	stats, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("error reading dir %s: %w", dir, err)
@@ -124,10 +130,6 @@ func (syn *syncer) handleEvent(ctx context.Context, dir string) error {
 		}
 
 		syn.Logger.Printf("synchronized %s to s3://%s/%s", filepath.Join(dir, stat.Name()), syn.bucketName, syn.findObject(stat.Name()))
-	}
-
-	if err := os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("error cleaning dir %s: %w", dir, err)
 	}
 
 	return nil
