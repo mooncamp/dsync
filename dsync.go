@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/elazarl/goproxy"
 	"github.com/sirupsen/logrus"
@@ -40,9 +41,17 @@ func main() {
 		log.Fatalf("error initializing crypto key: %v", err)
 	}
 
+	transport, err := minio.DefaultTransport(true)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	transport.ResponseHeaderTimeout = 15 * time.Minute
+	transport.IdleConnTimeout = 90 * time.Second
+
 	minioClient, err := minio.New(endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(s3AccessKey, s3Secret, ""),
-		Secure: true,
+		Creds:     credentials.NewStaticV4(s3AccessKey, s3Secret, ""),
+		Secure:    true,
+		Transport: transport,
 	})
 	if err != nil {
 		log.Fatalln(err)
@@ -115,6 +124,33 @@ func (resp ExportResponse) ID() string {
 	return words[0]
 }
 
+func (syn *syncer) processEvent(exportResponse ExportResponse) error {
+	if err := syn.busyWait(context.Background(), exportResponse); err != nil {
+		syn.Logger.WithField("task.id", exportResponse.ID()).WithError(err).Error("error during busy wait")
+		return err
+	}
+
+	files, err := os.ReadDir(syn.toWatch)
+	if err != nil {
+		syn.Logger.WithField("task.id", exportResponse.ID()).WithError(err).Error("error reading watch dir")
+		return err
+	}
+
+	for _, file := range files {
+		if !file.IsDir() {
+			continue
+		}
+
+		syn.Logger.Infof("syncing dir: %s", filepath.Join(syn.toWatch, file.Name()))
+
+		if err := syn.handleEvent(context.Background(), filepath.Join(syn.toWatch, file.Name())); err != nil {
+			syn.Logger.Errorf("error syncing dir %s: %v", filepath.Join(syn.toWatch, file.Name()), err)
+		}
+	}
+
+	return nil
+}
+
 func (syn *syncer) run() error {
 	proxy := goproxy.NewProxyHttpServer()
 	proxy.Logger = syn.Logger
@@ -140,28 +176,7 @@ func (syn *syncer) run() error {
 
 	go func() {
 		for exportResponse := range event {
-			if err := syn.busyWait(context.Background(), exportResponse); err != nil {
-				syn.Logger.WithField("task.id", exportResponse.ID()).WithError(err).Error("error during busy wait")
-				continue
-			}
-
-			files, err := os.ReadDir(syn.toWatch)
-			if err != nil {
-				syn.Logger.WithField("task.id", exportResponse.ID()).WithError(err).Error("error reading watch dir")
-				continue
-			}
-
-			for _, file := range files {
-				if !file.IsDir() {
-					continue
-				}
-
-				syn.Logger.Infof("syncing dir: %s", filepath.Join(syn.toWatch, file.Name()))
-
-				if err := syn.handleEvent(context.Background(), filepath.Join(syn.toWatch, file.Name())); err != nil {
-					syn.Logger.Errorf("error syncing dir %s: %v", filepath.Join(syn.toWatch, file.Name()), err)
-				}
-			}
+			_ = syn.processEvent(exportResponse)
 		}
 	}()
 

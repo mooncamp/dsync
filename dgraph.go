@@ -23,7 +23,7 @@ func (rms *readMockSeeker) Read(p []byte) (n int, err error) {
 	return rms.Reader.Read(p)
 }
 
-func (rms *readMockSeeker) Seek(offset int64, whence int) (int64, error) {
+func (rms *readMockSeeker) Seek(_ int64, _ int) (int64, error) {
 	return 0, nil
 }
 
@@ -100,11 +100,15 @@ func (syn *syncer) handleEvent(ctx context.Context, dir string) error {
 		var fileStat os.FileInfo
 		for i := 0; i < 10; i++ {
 			fileStat, err = os.Stat(filepath.Join(dir, stat.Name()))
-			if err != nil {
-				syn.Logger.Infof("error stating file: %v", err)
-				time.Sleep(time.Second * 5)
-				continue
+			if err == nil {
+				break
 			}
+
+			syn.Logger.Infof("error stating file: %v", err)
+			time.Sleep(5 * time.Second)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to stat file %s after retries: %w", filepath.Join(dir, stat.Name()), err)
 		}
 
 		file, err := os.OpenFile(filepath.Join(dir, stat.Name()), os.O_EXCL|os.O_RDONLY, 0600)
@@ -126,13 +130,33 @@ func (syn *syncer) handleEvent(ctx context.Context, dir string) error {
 			minio.PutObjectOptions{ServerSideEncryption: syn.SSEC},
 		)
 		if err != nil {
-			return fmt.Errorf("error storing backup object %s to s3: %w", syn.findObject(stat.Name()), err)
+			err := syn.handlePutObjectError(ctx, err, stat)
+			if err != nil {
+				return fmt.Errorf("error storing backup object %s to s3: %w", syn.findObject(stat.Name()), err)
+			}
 		}
 
-		syn.Logger.Printf("synchronized %s to s3://%s/%s", filepath.Join(dir, stat.Name()), syn.bucketName, syn.findObject(stat.Name()))
+		syn.Logger.Infof("synchronized %s to s3://%s/%s", filepath.Join(dir, stat.Name()), syn.bucketName, syn.findObject(stat.Name()))
 	}
 
 	return nil
+}
+
+func (syn *syncer) handlePutObjectError(ctx context.Context, err error, stat os.DirEntry) error {
+	if strings.Contains(err.Error(), "This multipart completion is already in progress") {
+		syn.Logger.Warn("multipart completion already in progress. Verifying backend state...")
+		for i := 0; i < 5; i++ {
+			time.Sleep(10 * time.Second)
+			info, err := syn.MinioClient.StatObject(ctx, syn.bucketName, syn.findObject(stat.Name()), minio.StatObjectOptions{ServerSideEncryption: syn.SSEC})
+
+			if err == nil {
+				if time.Since(info.LastModified) < 20*time.Minute {
+					return nil
+				}
+			}
+		}
+	}
+	return err
 }
 
 func (*syncer) findObject(in string) string {
