@@ -57,8 +57,10 @@ func main() {
 		log.Fatalln(err)
 	}
 
+	logger := logrus.New()
+	logger.SetFormatter(&logrus.JSONFormatter{TimestampFormat: time.RFC3339})
 	syn := &syncer{
-		Logger: logrus.New(),
+		Logger: logger,
 
 		SSEC:        ssec,
 		MinioClient: minioClient,
