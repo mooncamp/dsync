@@ -111,32 +111,42 @@ func (syn *syncer) handleEvent(ctx context.Context, dir string) error {
 			return fmt.Errorf("failed to stat file %s after retries: %w", filepath.Join(dir, stat.Name()), err)
 		}
 
-		file, err := os.OpenFile(filepath.Join(dir, stat.Name()), os.O_EXCL|os.O_RDONLY, 0600)
-		if err != nil {
-			return fmt.Errorf("error opening file %s: %w", filepath.Join(dir, stat.Name()), err)
-		}
-
-		syn.Logger.Infof("initiating sync of %s to s3://%s/%s", filepath.Join(dir, stat.Name()), syn.bucketName, syn.findObject(stat.Name()))
-
-		h := md5.New()
-		if _, err := h.Write([]byte(syn.cryptoKey)); err != nil {
-			return fmt.Errorf("error generating md5 digest of encryption key: %w", err)
-		}
-
-		_, err = syn.MinioClient.PutObject(
-			ctx,
-			syn.bucketName,
-			syn.findObject(stat.Name()), file, fileStat.Size(),
-			minio.PutObjectOptions{ServerSideEncryption: syn.SSEC},
-		)
-		if err != nil {
-			err := syn.handlePutObjectError(ctx, err, stat)
+		// Wrap the logic in a func so defer works per-file
+		err = func() error {
+			file, err := os.OpenFile(filepath.Join(dir, stat.Name()), os.O_RDONLY, 0600)
 			if err != nil {
-				return fmt.Errorf("error storing backup object %s to s3: %w", syn.findObject(stat.Name()), err)
+				return fmt.Errorf("error opening file %s: %w", filepath.Join(dir, stat.Name()), err)
 			}
-		}
+			defer file.Close()
 
-		syn.Logger.Infof("synchronized %s to s3://%s/%s", filepath.Join(dir, stat.Name()), syn.bucketName, syn.findObject(stat.Name()))
+			syn.Logger.Infof("initiating sync of %s to s3://%s/%s", filepath.Join(dir, stat.Name()), syn.bucketName, syn.findObject(stat.Name()))
+
+			h := md5.New()
+			if _, err := h.Write([]byte(syn.cryptoKey)); err != nil {
+				return fmt.Errorf("error generating md5 digest of encryption key: %w", err)
+			}
+
+			_, err = syn.MinioClient.PutObject(
+				ctx,
+				syn.bucketName,
+				syn.findObject(stat.Name()), file, fileStat.Size(),
+				minio.PutObjectOptions{ServerSideEncryption: syn.SSEC},
+			)
+			if err != nil {
+				err := syn.handlePutObjectError(ctx, err, stat)
+				if err != nil {
+					return fmt.Errorf("error storing backup object %s to s3: %w", syn.findObject(stat.Name()), err)
+				}
+			}
+
+			syn.Logger.Infof("synchronized %s to s3://%s/%s", filepath.Join(dir, stat.Name()), syn.bucketName, syn.findObject(stat.Name()))
+
+			return nil
+		}()
+
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
